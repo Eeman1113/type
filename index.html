@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASCII FPS - Shooting Mechanics</title>
+    <style>
+        /* Basic reset and full screen setup */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* Prevent scrollbars */
+            background-color: #000; /* Black background */
+            color: #eee; /* Default text color */
+            font-family: 'Courier New', Courier, monospace; /* Essential for alignment */
+            cursor: crosshair; /* Change cursor to crosshair */
+        }
+        #screen {
+            display: block; /* Remove extra space below canvas */
+            width: 100%;   /* Fill width */
+            height: 100%;  /* Fill height */
+            background-color: #000; /* Canvas background */
+            image-rendering: pixelated; /* Keep characters sharp */
+            image-rendering: crisp-edges;
+        }
+        /* Hide controls div - game is fullscreen now */
+        #controls {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="screen"></canvas>
+<div id="controls"></div>
+
+<script>
+    // --- Canvas and Context ---
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+
+    // --- Configuration ---
+    const FONT_SIZE = 12;
+    const CHAR_WIDTH = FONT_SIZE * 0.6;
+    const CHAR_HEIGHT = FONT_SIZE;
+
+    // --- Dynamic Screen Dimensions ---
+    let SCREEN_WIDTH_CHARS = 80;
+    let SCREEN_HEIGHT_CHARS = 25;
+    let CANVAS_WIDTH = window.innerWidth;
+    let CANVAS_HEIGHT = window.innerHeight;
+
+    // --- Map Data ---
+    const MAP_WIDTH = 16;
+    const MAP_HEIGHT = 16;
+    // Map Data: 0 = empty, 1 = standard, 2 = patterned, 3 = glowing
+    const MAP_DATA = [
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,0,1,1,0,1,0,1,1,1,1,0,1,1,0,1,
+        1,0,2,0,0,1,0,0,0,0,1,0,0,3,0,1,
+        1,0,2,0,0,1,0,1,1,0,1,0,1,3,0,1,
+        1,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1,
+        1,0,1,0,0,1,0,0,1,0,0,0,1,0,0,1,
+        1,0,1,1,1,1,0,1,1,1,1,0,1,1,0,1,
+        1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,
+        1,0,1,1,1,1,0,1,2,2,1,0,1,1,0,1,
+        1,0,0,0,0,1,0,0,0,2,0,0,0,3,0,1,
+        1,1,1,1,0,1,1,1,0,1,1,1,0,1,0,1,
+        1,0,0,0,0,0,0,1,0,0,0,0,0,1,0,1,
+        1,0,1,1,1,1,1,1,1,1,1,1,0,1,0,1,
+        1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    ];
+
+    // --- Player State ---
+    let playerX = 8.5;
+    let playerY = 8.5;
+    let playerA = Math.PI / 4;
+    let playerFOV = Math.PI / 2.8;
+    let playerMoveSpeed = 0.05;
+    let playerRotSpeed = 0.03;
+    let playerHealth = 100; // Added health
+
+    // --- Weapon State ---
+    let currentAmmo = 30;
+    const MAX_AMMO = 30;
+    const RELOAD_TIME_MS = 1500; // 1.5 seconds
+    let isReloading = false;
+    let isShooting = false; // To show muzzle flash briefly
+    let muzzleFlashTimer = 0;
+    const MUZZLE_FLASH_DURATION = 80; // ms
+
+    // --- Input State ---
+    const keys = { w: false, s: false, a: false, d: false, r: false }; // Added 'r' for reload
+
+    // --- Styling & Text Art (same as before) ---
+    const WALL1_CHARS = "██▇▇▆▆▅▅▄▄▃▃▂▂  ";
+    const WALL1_COLORS = ['#FFFFFF', '#F8F8F8', '#EAEAEA', '#E0E0E0', '#D0D0D0', '#C0C0C0', '#B0B0B0', '#A0A0A0', '#909090', '#808080', '#707070', '#606060', '#505050', '#404040', '#303030', '#202020', '#151515', '#0A0A0A'];
+    const WALL2_CHARS = "╬╫╬╪▓▒░#*+|=;:'. ";
+    const WALL2_COLORS = ['#AFFFFF', '#90F0F0', '#78E0E0', '#60D0D0', '#48C0C0', '#30B0B0', '#20A0A0', '#159090', '#0A8080', '#057070', '#036060', '#025050', '#014040', '#013030', '#002020', '#001515', '#001010'];
+    const WALL3_CHARS = "@@#%*+=-:.    ";
+    const WALL3_COLORS = ['#FFFF80', '#FFEE70', '#FFDD60', '#FFCC50', '#FFBB40', '#FFAA30', '#FF9925', '#FF881A', '#FF7710', '#F0660A', '#E05505', '#D04403', '#B03302', '#902201', '#701101', '#500501', '#300101'];
+    const FLOOR_CHARS = " `.-=imidazo*#";
+    const FLOOR_COLORS = ['#252520', '#2a2a24', '#303028', '#35352c', '#3a3a30', '#404035', '#45453a', '#4a4a40', '#505045', '#55554a', '#5a5a50'];
+    const CEILING_CHARS = "   .'`~-=^";
+    const CEILING_COLORS = ['#010103', '#020205', '#030308', '#04040A', '#05050D', '#060610', '#080813', '#0A0A16', '#0C0C1A', '#0E0E1E'];
+    const MAX_DEPTH = MAP_WIDTH * 1.8;
+    const HUD_COLOR = '#00FF00';
+    const HUD_RELOADING_COLOR = '#FFA500'; // Orange for reloading text
+    const CROSSHAIR_COLOR = '#FF0000'; // Red crosshair
+    const GUN_COLOR = '#C0C0C0';
+    const GUN_SHADOW_COLOR = '#404040';
+    const MUZZLE_FLASH_COLOR = '#FFFF00'; // Bright yellow flash
+
+    // Slightly adjusted gun art
+    const GUN_ART = [
+        "        ,--､",
+        "        | |",
+        "     ,--'-'-.",
+        "    /________\\",
+        "    |        |",
+        "    '.______.'"
+    ];
+    // Muzzle flash character
+    const MUZZLE_FLASH_ART = "*";
+
+    // --- Helper Functions ---
+    function getMapValue(x, y) {
+        const mapX = Math.floor(x);
+        const mapY = Math.floor(y);
+        if (mapX < 0 || mapX >= MAP_WIDTH || mapY < 0 || mapY >= MAP_HEIGHT) return 1;
+        return MAP_DATA[mapY * MAP_WIDTH + mapX];
+    }
+
+    // --- Game Actions ---
+    function shoot() {
+        if (currentAmmo > 0 && !isReloading) {
+            currentAmmo--;
+            isShooting = true; // Trigger muzzle flash
+            muzzleFlashTimer = MUZZLE_FLASH_DURATION;
+            // console.log("Bang! Ammo:", currentAmmo); // Debug log
+
+            // Add recoil/screen shake later if desired
+            // Add actual hit detection raycast later if desired
+        } else if (currentAmmo <= 0 && !isReloading) {
+            // console.log("Click! Out of ammo."); // Debug log
+            // Play empty click sound later
+            startReload(); // Auto-reload when trying to shoot empty
+        }
+    }
+
+    function startReload() {
+        if (!isReloading && currentAmmo < MAX_AMMO) {
+            isReloading = true;
+            // console.log("Reloading..."); // Debug log
+            setTimeout(() => {
+                currentAmmo = MAX_AMMO;
+                isReloading = false;
+                // console.log("Reload Complete!"); // Debug log
+            }, RELOAD_TIME_MS);
+        }
+    }
+
+    // --- Update & Render ---
+    function update(deltaTime) {
+        // --- Player Movement ---
+        let newX = playerX;
+        let newY = playerY;
+        let moved = false;
+        let dx = 0, dy = 0; // Delta movement for this frame
+
+        // Rotation
+        if (keys.a) playerA -= playerRotSpeed;
+        if (keys.d) playerA += playerRotSpeed;
+        playerA = (playerA + 2 * Math.PI) % (2 * Math.PI);
+
+        // Forward/Backward Movement
+        if (keys.w) { dx += Math.cos(playerA) * playerMoveSpeed; dy += Math.sin(playerA) * playerMoveSpeed; moved = true; }
+        if (keys.s) { dx -= Math.cos(playerA) * playerMoveSpeed; dy -= Math.sin(playerA) * playerMoveSpeed; moved = true; }
+
+        if (moved) {
+            newX = playerX + dx;
+            newY = playerY + dy;
+            // Collision Detection
+            const currentTileX = Math.floor(playerX);
+            const currentTileY = Math.floor(playerY);
+            const targetTileX = Math.floor(newX);
+            const targetTileY = Math.floor(newY);
+            if (getMapValue(targetTileX, targetTileY) === 0) { playerX = newX; playerY = newY; }
+            else {
+                if (getMapValue(targetTileX, currentTileY) === 0) playerX = newX;
+                if (getMapValue(Math.floor(playerX), targetTileY) === 0) playerY = newY;
+            }
+        }
+
+        // --- Reload ---
+        if (keys.r && !isReloading) {
+            startReload();
+        }
+
+        // --- Muzzle Flash Timer ---
+        if (isShooting) {
+            muzzleFlashTimer -= deltaTime;
+            if (muzzleFlashTimer <= 0) {
+                isShooting = false;
+            }
+        }
+    }
+
+    function render() {
+        // Clear canvas
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        // Set base font
+        ctx.font = `${FONT_SIZE}px 'Courier New', Courier, monospace`;
+        ctx.textBaseline = 'top';
+
+        // --- Raycasting (same logic as before) ---
+        for (let x = 0; x < SCREEN_WIDTH_CHARS; x++) {
+            const rayAngle = (playerA - playerFOV / 2) + (x / SCREEN_WIDTH_CHARS) * playerFOV;
+            const eyeX = Math.cos(rayAngle); const eyeY = Math.sin(rayAngle);
+            let distanceToWall = 0; let hitWall = false; let wallType = 1; let hitBoundary = false;
+            const deltaDistX = (eyeX === 0) ? 1e30 : Math.abs(1 / eyeX);
+            const deltaDistY = (eyeY === 0) ? 1e30 : Math.abs(1 / eyeY);
+            let mapX = Math.floor(playerX); let mapY = Math.floor(playerY);
+            let sideDistX, sideDistY; let stepX, stepY; let side;
+            if (eyeX < 0) { stepX = -1; sideDistX = (playerX - mapX) * deltaDistX; } else { stepX = 1; sideDistX = (mapX + 1.0 - playerX) * deltaDistX; }
+            if (eyeY < 0) { stepY = -1; sideDistY = (playerY - mapY) * deltaDistY; } else { stepY = 1; sideDistY = (mapY + 1.0 - playerY) * deltaDistY; }
+            while (!hitWall && distanceToWall < MAX_DEPTH) {
+                if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; } else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+                if (mapX < 0 || mapX >= MAP_WIDTH || mapY < 0 || mapY >= MAP_HEIGHT) { hitWall = true; distanceToWall = MAX_DEPTH; hitBoundary = true; }
+                else { const currentWallType = getMapValue(mapX, mapY); if (currentWallType > 0) { hitWall = true; wallType = currentWallType; if (side === 0) distanceToWall = (mapX - playerX + (1 - stepX) / 2) / eyeX; else distanceToWall = (mapY - playerY + (1 - stepY) / 2) / eyeY; } }
+            }
+            if (distanceToWall <= 0.05) distanceToWall = 0.05; if (distanceToWall > MAX_DEPTH) distanceToWall = MAX_DEPTH;
+            const perceivedWallHeight = SCREEN_HEIGHT_CHARS / distanceToWall;
+            const ceiling = Math.max(0, Math.floor((SCREEN_HEIGHT_CHARS / 2) - perceivedWallHeight / 2));
+            const floor = Math.min(SCREEN_HEIGHT_CHARS, Math.ceil((SCREEN_HEIGHT_CHARS / 2) + perceivedWallHeight / 2));
+            let wallChars, wallColors;
+            switch(wallType) { case 2: wallChars = WALL2_CHARS; wallColors = WALL2_COLORS; break; case 3: wallChars = WALL3_CHARS; wallColors = WALL3_COLORS; break; default: wallChars = WALL1_CHARS; wallColors = WALL1_COLORS; break; }
+            if (hitBoundary) { wallChars = WALL1_CHARS; wallColors = WALL1_COLORS; }
+            const wallDistRatio = Math.min(1.0, distanceToWall / MAX_DEPTH);
+            const wallCharIndex = Math.min(wallChars.length - 1, Math.floor(wallDistRatio * wallChars.length));
+            const wallShadeChar = wallChars[wallCharIndex];
+            let wallColor = wallColors[Math.min(wallColors.length - 1, wallCharIndex)];
+            if (side === 0 && !hitBoundary && wallCharIndex < wallColors.length - 1) { wallColor = wallColors[wallCharIndex + 1]; }
+            const drawX = x * CHAR_WIDTH;
+            for (let y = 0; y < SCREEN_HEIGHT_CHARS; y++) {
+                const drawY = y * CHAR_HEIGHT;
+                if (y < ceiling) { const ceilingDistRatio = (SCREEN_HEIGHT_CHARS / 2.0) / (SCREEN_HEIGHT_CHARS / 2.0 - y); const normalizedCeilingDist = Math.min(1.0, ceilingDistRatio / (MAX_DEPTH * 0.6)); const ceilCharIndex = Math.min(CEILING_CHARS.length - 1, Math.floor(normalizedCeilingDist * CEILING_CHARS.length)); ctx.fillStyle = CEILING_COLORS[Math.min(CEILING_COLORS.length - 1, ceilCharIndex)]; ctx.fillText(CEILING_CHARS[ceilCharIndex], drawX, drawY); }
+                else if (y >= ceiling && y < floor) { ctx.fillStyle = wallColor; ctx.fillText(wallShadeChar, drawX, drawY); }
+                else { const floorDistRatio = (SCREEN_HEIGHT_CHARS / 2.0) / (y - SCREEN_HEIGHT_CHARS / 2.0); const normalizedFloorDist = Math.min(1.0, floorDistRatio / (MAX_DEPTH * 0.6)); const floorCharIndex = Math.min(FLOOR_CHARS.length - 1, Math.floor(normalizedFloorDist * FLOOR_CHARS.length)); ctx.fillStyle = FLOOR_COLORS[Math.min(FLOOR_COLORS.length - 1, floorCharIndex)]; ctx.fillText(FLOOR_CHARS[floorCharIndex], drawX, drawY); }
+            }
+        }
+
+        // --- Draw Crosshair ---
+        const crosshairX = CANVAS_WIDTH / 2;
+        const crosshairY = CANVAS_HEIGHT / 2;
+        const crosshairSize = CHAR_HEIGHT * 0.5; // Adjust size as needed
+        ctx.fillStyle = CROSSHAIR_COLOR;
+        ctx.font = `bold ${FONT_SIZE}px 'Courier New', Courier, monospace`; // Use base font size, maybe bold
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('+', crosshairX, crosshairY); // Simple '+' crosshair
+
+        // --- Draw HUD ---
+        ctx.font = `bold ${FONT_SIZE + 2}px 'Courier New', Courier, monospace`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top'; // Reset baseline
+        ctx.fillStyle = HUD_COLOR;
+        ctx.fillText(`HP: ${playerHealth}`, CHAR_WIDTH, CHAR_HEIGHT * 1);
+        // Display Ammo or Reloading status
+        if (isReloading) {
+            ctx.fillStyle = HUD_RELOADING_COLOR; // Orange when reloading
+            ctx.fillText("RELOADING", CHAR_WIDTH, CHAR_HEIGHT * 2.5);
+        } else {
+            ctx.fillStyle = HUD_COLOR;
+            ctx.fillText(`AMMO: ${currentAmmo}/${MAX_AMMO}`, CHAR_WIDTH, CHAR_HEIGHT * 2.5);
+        }
+
+
+        // --- Draw Gun & Muzzle Flash ---
+        const gunBaseX = CANVAS_WIDTH - (13 * CHAR_WIDTH); // Adjusted position slightly
+        const gunBaseY = CANVAS_HEIGHT - (GUN_ART.length * CHAR_HEIGHT) - CHAR_HEIGHT;
+        // Simple gun bobbing effect based on movement (optional)
+        const bobAmount = (keys.w || keys.s) ? Math.sin(performance.now() * 0.01) * 2 : 0; // Adjust speed/amount
+        const gunDrawY = gunBaseY + bobAmount;
+
+        ctx.font = `${FONT_SIZE}px 'Courier New', Courier, monospace`;
+        ctx.textAlign = 'left';
+
+        // Draw gun shadow
+        ctx.fillStyle = GUN_SHADOW_COLOR;
+        for (let i = 0; i < GUN_ART.length; i++) {
+            ctx.fillText(GUN_ART[i], gunBaseX + 2, gunDrawY + i * CHAR_HEIGHT + 2);
+        }
+        // Draw main gun art
+        ctx.fillStyle = GUN_COLOR;
+        for (let i = 0; i < GUN_ART.length; i++) {
+            ctx.fillText(GUN_ART[i], gunBaseX, gunDrawY + i * CHAR_HEIGHT);
+        }
+
+        // Draw Muzzle Flash if shooting
+        if (isShooting) {
+            ctx.fillStyle = MUZZLE_FLASH_COLOR;
+            ctx.font = `bold ${FONT_SIZE + 4}px 'Courier New', Courier, monospace`; // Larger flash
+            // Position flash near the barrel (adjust coordinates as needed based on GUN_ART)
+            const flashX = gunBaseX + (6 * CHAR_WIDTH); // Approx barrel end X
+            const flashY = gunDrawY + (0 * CHAR_HEIGHT); // Approx barrel end Y
+            ctx.fillText(MUZZLE_FLASH_ART, flashX, flashY);
+        }
+    }
+
+    // --- Game Loop ---
+    let lastTime = 0;
+    function gameLoop(timestamp) {
+        const deltaTime = timestamp - lastTime;
+        lastTime = timestamp;
+
+        update(deltaTime || 0); // Pass deltaTime, handle initial undefined case
+        render();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    // --- Resize Handling ---
+    function handleResize() {
+        CANVAS_WIDTH = window.innerWidth;
+        CANVAS_HEIGHT = window.innerHeight;
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        SCREEN_WIDTH_CHARS = Math.floor(CANVAS_WIDTH / CHAR_WIDTH);
+        SCREEN_HEIGHT_CHARS = Math.floor(CANVAS_HEIGHT / CHAR_HEIGHT);
+        // console.log(`Resized to: ${SCREEN_WIDTH_CHARS}x${SCREEN_HEIGHT_CHARS} chars`); // Debug log
+    }
+
+    // --- Initialization ---
+    function init() {
+        handleResize(); // Initial size calculation
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key in keys) keys[key] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key in keys) keys[key] = false;
+        });
+        window.addEventListener('resize', handleResize);
+        // Mouse click listener for shooting
+        canvas.addEventListener('mousedown', (e) => {
+            // Check if left mouse button was clicked (button 0)
+            if (e.button === 0) {
+                shoot();
+            }
+        });
+
+        // Start game loop
+        lastTime = performance.now();
+        requestAnimationFrame(gameLoop);
+        console.log("ASCII FPS Initialized (Shooting Enabled). Use W,A,S,D, Mouse Click, R.");
+    }
+
+    // --- Start ---
+    window.onload = init;
+
+</script>
+
+</body>
+</html>
